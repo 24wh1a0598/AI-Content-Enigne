@@ -10,10 +10,11 @@ atexit.register(_httpx_client.close)
 _client = runwayml.RunwayML(api_key=RUNWAY_API_KEY, http_client=_httpx_client)
 
 
-def build_motion_prompt(product: str, tone: str, tagline: str) -> str:
+def build_motion_prompt(product: str, tone: str, tagline: str, ad_goal: str = "") -> str:
     """Construct a cinematic motion prompt for Runway."""
+    goal_clause = f" ({ad_goal} campaign)" if ad_goal else ""
     return (
-        f"Slow cinematic camera push towards {product}. "
+        f"Slow cinematic camera push towards {product}{goal_clause}. "
         f"Inspired by the campaign theme: '{tagline}'. "
         f"Tone: {tone}. "
         "Movement: gentle forward dolly, subtle breathing motion. "
@@ -23,7 +24,7 @@ def build_motion_prompt(product: str, tone: str, tagline: str) -> str:
     )
 
 
-def generate_video(image_url: str, product: str, tone: str, tagline: str) -> str:
+def generate_video(image_url: str, product: str, tone: str, tagline: str, ad_goal: str = "") -> str:
     """
     Animate the hero image using Runway Gen-3.
 
@@ -35,7 +36,7 @@ def generate_video(image_url: str, product: str, tone: str, tagline: str) -> str
     -------
     URL of the generated video
     """
-    motion_prompt = build_motion_prompt(product, tone, tagline)
+    motion_prompt = build_motion_prompt(product, tone, tagline, ad_goal=ad_goal)
 
     task = _client.image_to_video.create(
         model="gen3a_turbo",

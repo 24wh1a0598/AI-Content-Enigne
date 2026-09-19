@@ -13,13 +13,23 @@ _client = OpenAI(
 )
 
 
-def build_image_prompt(product: str, audience: str, tone: str, tagline: str) -> str:
-    """Construct a detailed image generation prompt from campaign context."""
+def build_image_prompt(product: str, audience: str, tone: str, tagline: str, ad_goal: str = "") -> str:
+    """Construct a detailed image generation prompt from campaign context.
+
+    ad_goal (e.g. "Flash Sale", "Product Launch") is added to the subject line so
+    the generated visual reflects the advertising purpose.
+    Note: the uploaded product photo is NOT sent to the image model in this Phase 1
+    prototype — the current OpenRouter/Gemini image API does not accept an image as
+    input. The product description is used instead. Image-input support can be added
+    in a later phase when a vision-capable generation model is available.
+    """
     tone_key = tone.lower()
     style_map = TONE_STYLES.get(tone_key, TONE_STYLES["professional"])
 
+    goal_clause = f" for a {ad_goal} campaign" if ad_goal else ""
+
     return (
-        f"Subject: {product} product hero shot for {audience}. "
+        f"Subject: {product} product hero shot for {audience}{goal_clause}. "
         f"Concept inspired by the campaign idea: '{tagline}'. "
         f"Style: {style_map['style']}. "
         f"Lighting: {style_map['lighting']}. "
@@ -52,7 +62,7 @@ def _extract_image_url(message) -> str:
     return url
 
 
-def generate_image(product: str, audience: str, tone: str, tagline: str) -> tuple[str, str]:
+def generate_image(product: str, audience: str, tone: str, tagline: str, ad_goal: str = "") -> tuple[str, str]:
     """
     Generate a hero image via OpenRouter (same provider as text generation).
 
@@ -60,7 +70,7 @@ def generate_image(product: str, audience: str, tone: str, tagline: str) -> tupl
     -------
     (image_url, prompt_used)
     """
-    prompt = build_image_prompt(product, audience, tone, tagline)
+    prompt = build_image_prompt(product, audience, tone, tagline, ad_goal=ad_goal)
     resp = _client.chat.completions.create(
         model=IMAGE_MODEL,
         messages=[{"role": "user", "content": prompt}],

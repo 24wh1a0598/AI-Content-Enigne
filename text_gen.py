@@ -133,14 +133,20 @@ def probe_affordance(max_probe: int = 256, ttl: int = 30) -> int | None:
     return None
 
 
-def generate_tagline(product: str, audience: str, tone: str) -> str:
-    """Few-shot prompting – return a single campaign tagline (≤10 words)."""
+def generate_tagline(product: str, audience: str, tone: str, ad_goal: str = "") -> str:
+    """Few-shot prompting – return a single campaign tagline (≤10 words).
+
+    ad_goal (e.g. "Flash Sale", "Product Launch") is woven into the prompt so the
+    tagline reflects the advertising purpose, not just the product.
+    """
     tone_key = tone.lower()
     examples = _TAGLINE_EXAMPLES.get(tone_key, _TAGLINE_EXAMPLES["professional"])
 
     few_shot = "\n".join(
         f'Product: {p}\nTagline: "{t}"' for p, t in examples
     )
+
+    goal_line = f"Advertising Goal: {ad_goal}\n" if ad_goal else ""
 
     messages = [
         {"role": "system", "content": (
@@ -150,24 +156,33 @@ def generate_tagline(product: str, audience: str, tone: str) -> str:
         {"role": "user", "content": (
             f"Tone examples:\n{few_shot}\n\n"
             f"Now create a tagline for:\n"
-            f"Product: {product}\nAudience: {audience}\nTone: {tone}\n\n"
+            f"Product: {product}\nAudience: {audience}\n{goal_line}Tone: {tone}\n\n"
             "Return ONLY the tagline."
         )},
     ]
-    # Probe provider affordance (cheap operation) and choose a safe token budget.
-    afford = probe_affordance()
-    if afford is None:
-        # if probe failed, fall back to conservative default
-        chosen = 16
+    # probe_affordance() is designed for paid models that return 402 "can only
+    # afford N tokens" errors.  Free models (:free suffix) never return that error
+    # — they either succeed or return 429 (handled by the _chat retry loop).
+    # Skipping the probe on free models saves scarce daily-quota requests.
+    if TEXT_MODEL.endswith(":free"):
+        chosen = 32   # safe fixed budget — taglines are always short
     else:
-        # choose something the provider can afford, reserving a tiny safety margin
-        chosen = max(8, min(32, afford - 2))
+        # Probe provider affordance (cheap operation) and choose a safe token budget.
+        afford = probe_affordance()
+        if afford is None:
+            chosen = 16
+        else:
+            chosen = max(8, min(32, afford - 2))
 
     return _chat(messages, max_tokens=chosen)
 
 
-def generate_blog(product: str, audience: str, tone: str, tagline: str) -> str:
-    """Role prompting – return a 100–120 word blog introduction."""
+def generate_blog(product: str, audience: str, tone: str, tagline: str, ad_goal: str = "") -> str:
+    """Role prompting – return a 100–120 word blog introduction.
+
+    ad_goal is included so the copy reflects the campaign purpose.
+    """
+    goal_line = f"Advertising Goal: {ad_goal}\n" if ad_goal else ""
     messages = [
         {"role": "system", "content": (
             "You are an expert Content Strategist writing for a marketing blog. "
@@ -175,7 +190,7 @@ def generate_blog(product: str, audience: str, tone: str, tagline: str) -> str:
         )},
         {"role": "user", "content": (
             f"Write a compelling blog introduction for:\n"
-            f"Product: {product}\nAudience: {audience}\nTone: {tone}\n"
+            f"Product: {product}\nAudience: {audience}\n{goal_line}Tone: {tone}\n"
             f"Campaign tagline (weave it in naturally): \"{tagline}\"\n\n"
             "Length: 100-120 words."
         )},
@@ -184,7 +199,7 @@ def generate_blog(product: str, audience: str, tone: str, tagline: str) -> str:
     return _chat(messages, max_tokens=140)
 
 
-def _gen_social_platform(product: str, audience: str, tone: str, tagline: str, blog: str, platform: str, max_tokens: int = 140, retries: int = 2) -> str:
+def _gen_social_platform(product: str, audience: str, tone: str, tagline: str, blog: str, platform: str, ad_goal: str = "", max_tokens: int = 140, retries: int = 2) -> str:
     """Generate a single platform post as plain text. Retries only this stage on failure."""
     limits = {
         "twitter": 280,
@@ -193,6 +208,8 @@ def _gen_social_platform(product: str, audience: str, tone: str, tagline: str, b
     }
     char_limit = limits.get(platform.lower(), 500)
 
+    goal_line = f"Advertising Goal: {ad_goal}\n" if ad_goal else ""
+
     system_msg = (
         "You are a concise social media copywriter. Return ONLY the post text (no markdown, no JSON, no explanations). "
         "Keep it short and punchy. Observe platform-specific rules: no hashtags in LinkedIn."
@@ -200,6 +217,7 @@ def _gen_social_platform(product: str, audience: str, tone: str, tagline: str, b
 
     user_msg = (
         f"Product: {product}\nAudience: {audience}\nTone: {tone}\nTagline: {tagline}\n"
+        f"{goal_line}"
         f"Blog context (brief): {blog[:300]}\nPlatform: {platform}\n\n"
         "Return only the single post text, concise and within platform limits."
     )
@@ -227,11 +245,11 @@ def _gen_social_platform(product: str, audience: str, tone: str, tagline: str, b
             time.sleep(1)
 
 
-def generate_social_posts(product: str, audience: str, tone: str, blog: str, tagline: str) -> dict:
+def generate_social_posts(product: str, audience: str, tone: str, blog: str, tagline: str, ad_goal: str = "") -> dict:
     """Generate social posts per platform and return dict.
 
-    This splits the work into three smaller calls (twitter/instagram/linkedin),
-    retries only the failed platform, and assembles the final JSON locally.
+    Splits work into three smaller calls (twitter/instagram/linkedin),
+    retries only the failed platform, and assembles the final dict locally.
     """
     platforms = ["twitter", "instagram", "linkedin"]
     results: dict[str, str] = {}
@@ -249,6 +267,7 @@ def generate_social_posts(product: str, audience: str, tone: str, blog: str, tag
                 tagline=tagline,
                 blog=blog,
                 platform=p,
+                ad_goal=ad_goal,
                 max_tokens=per_call_tokens.get(p, 120),
             )
         except Exception as e:
